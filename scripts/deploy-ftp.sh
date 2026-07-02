@@ -7,6 +7,16 @@ set -euo pipefail
 : "${FTP_SERVER_DIR:?FTP_SERVER_DIR is required}"
 
 SERVER_DIR="${FTP_SERVER_DIR%/}"
+CURL_COMMON=(
+  --ftp-create-dirs
+  --fail
+  --silent
+  --show-error
+  --connect-timeout 30
+  --max-time 180
+  --ftp-skip-pasv-ip
+  --user "${FTP_USERNAME}:${FTP_PASSWORD}"
+)
 
 upload_file() {
   local file="$1"
@@ -14,9 +24,8 @@ upload_file() {
   local attempt
 
   for attempt in 1 2 3; do
-    if curl --ftp-create-dirs --fail --silent --show-error \
+    if curl "${CURL_COMMON[@]}" \
       -T "$file" \
-      --user "${FTP_USERNAME}:${FTP_PASSWORD}" \
       "ftp://${FTP_SERVER}/${remote_path}"; then
       echo "Uploaded: ${file}"
       return 0
@@ -27,12 +36,11 @@ upload_file() {
   done
 
   for attempt in 1 2 3; do
-    if curl --ftp-create-dirs --fail --silent --show-error \
+    if curl "${CURL_COMMON[@]}" \
       --ssl-reqd \
       -T "$file" \
-      --user "${FTP_USERNAME}:${FTP_PASSWORD}" \
-      "ftps://${FTP_SERVER}/${remote_path}"; then
-      echo "Uploaded via FTPS: ${file}"
+      "ftp://${FTP_SERVER}/${remote_path}"; then
+      echo "Uploaded via explicit FTPS: ${file}"
       return 0
     fi
 
@@ -53,12 +61,36 @@ mapfile -t files < <(
     ! -path './.vscode/*' \
     ! -name '.gitignore' \
     ! -name '*.zip' \
-    -printf '%P\n'
+    -printf '%P\n' | sort
 )
 
-echo "Deploying ${#files[@]} files to ${SERVER_DIR}"
+priority_files=(index.html css/style.css js/main.js js/cars-data.js)
+ordered_files=()
+
+for priority in "${priority_files[@]}"; do
+  for file in "${files[@]}"; do
+    if [[ "$file" == "$priority" ]]; then
+      ordered_files+=("$file")
+    fi
+  done
+done
 
 for file in "${files[@]}"; do
+  skip=false
+  for priority in "${priority_files[@]}"; do
+    if [[ "$file" == "$priority" ]]; then
+      skip=true
+      break
+    fi
+  done
+  if [[ "$skip" == false ]]; then
+    ordered_files+=("$file")
+  fi
+done
+
+echo "Deploying ${#ordered_files[@]} files to ${SERVER_DIR}"
+
+for file in "${ordered_files[@]}"; do
   upload_file "$file"
 done
 

@@ -183,6 +183,14 @@ ul { list-style: none; }
 .footer-social a {
   width: 42px;
   height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.footer-social a:hover {
+  color: var(--white);
+  transform: translateY(-3px);
 }
 
 .footer-social a svg {

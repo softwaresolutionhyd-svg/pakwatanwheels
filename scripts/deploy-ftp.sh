@@ -7,91 +7,82 @@ set -euo pipefail
 : "${FTP_SERVER_DIR:?FTP_SERVER_DIR is required}"
 
 SERVER_DIR="${FTP_SERVER_DIR%/}"
-CURL_COMMON=(
-  --ftp-create-dirs
-  --fail
-  --silent
-  --show-error
-  --connect-timeout 30
-  --max-time 180
-  --ftp-skip-pasv-ip
-  --user "${FTP_USERNAME}:${FTP_PASSWORD}"
+
+EXCLUDES=(
+  -X .git/
+  -X .git*/
+  -X .github/
+  -X scripts/
+  -X .gitignore
+  -X .cursor/
+  -X .vscode/
+  -X '*.zip'
 )
 
-upload_file() {
-  local file="$1"
-  local remote_path="${SERVER_DIR}/${file}"
-  local attempt
-
-  for attempt in 1 2 3; do
-    if curl "${CURL_COMMON[@]}" \
-      -T "$file" \
-      "ftp://${FTP_SERVER}/${remote_path}"; then
-      echo "Uploaded: ${file}"
-      return 0
-    fi
-
-    echo "FTP retry ${attempt}/3 for ${file}"
-    sleep 2
-  done
-
-  for attempt in 1 2 3; do
-    if curl "${CURL_COMMON[@]}" \
-      --ssl-reqd \
-      -T "$file" \
-      "ftp://${FTP_SERVER}/${remote_path}"; then
-      echo "Uploaded via explicit FTPS: ${file}"
-      return 0
-    fi
-
-    echo "FTPS retry ${attempt}/3 for ${file}"
-    sleep 2
-  done
-
-  echo "Failed to upload: ${file}" >&2
-  return 1
+install_lftp() {
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq lftp
 }
 
-mapfile -t files < <(
-  find . -type f \
-    ! -path './.git/*' \
-    ! -path './.github/*' \
-    ! -path './scripts/*' \
-    ! -path './.cursor/*' \
-    ! -path './.vscode/*' \
-    ! -name '.gitignore' \
-    ! -name '*.zip' \
-    -printf '%P\n' | sort
-)
+deploy_sftp() {
+  echo "Deploying via SFTP..."
+  lftp -u "${FTP_USERNAME}","${FTP_PASSWORD}" "sftp://${FTP_SERVER}" <<EOF
+set cmd:fail-exit yes
+set sftp:auto-confirm yes
+set net:timeout 120
+set net:max-retries 5
+cd ${SERVER_DIR}
+lcd .
+mirror -R --verbose --parallel=2 ${EXCLUDES[*]} .
+bye
+EOF
+}
 
-priority_files=(index.html css/style.css js/main.js js/cars-data.js)
-ordered_files=()
+deploy_ftp() {
+  local use_ssl="$1"
+  echo "Deploying via FTP (ssl=${use_ssl})..."
 
-for priority in "${priority_files[@]}"; do
-  for file in "${files[@]}"; do
-    if [[ "$file" == "$priority" ]]; then
-      ordered_files+=("$file")
-    fi
-  done
-done
-
-for file in "${files[@]}"; do
-  skip=false
-  for priority in "${priority_files[@]}"; do
-    if [[ "$file" == "$priority" ]]; then
-      skip=true
-      break
-    fi
-  done
-  if [[ "$skip" == false ]]; then
-    ordered_files+=("$file")
+  if [[ "$use_ssl" == "true" ]]; then
+    lftp -u "${FTP_USERNAME}","${FTP_PASSWORD}" "${FTP_SERVER}" <<EOF
+set cmd:fail-exit yes
+set ssl:verify-certificate no
+set ftp:ssl-force true
+set ftp:ssl-protect-data true
+set ftp:passive-mode true
+set net:timeout 120
+set net:max-retries 5
+cd ${SERVER_DIR}
+lcd .
+mirror -R --verbose --parallel=1 ${EXCLUDES[*]} .
+bye
+EOF
+  else
+    lftp -u "${FTP_USERNAME}","${FTP_PASSWORD}" "${FTP_SERVER}" <<EOF
+set cmd:fail-exit yes
+set ftp:passive-mode true
+set net:timeout 120
+set net:max-retries 5
+cd ${SERVER_DIR}
+lcd .
+mirror -R --verbose --parallel=1 ${EXCLUDES[*]} .
+bye
+EOF
   fi
-done
+}
 
-echo "Deploying ${#ordered_files[@]} files to ${SERVER_DIR}"
+install_lftp
 
-for file in "${ordered_files[@]}"; do
-  upload_file "$file"
-done
+if deploy_sftp; then
+  echo "Deployment complete via SFTP."
+  exit 0
+fi
 
-echo "Deployment complete."
+echo "SFTP failed, trying FTPS..."
+if deploy_ftp true; then
+  echo "Deployment complete via FTPS."
+  exit 0
+fi
+
+echo "FTPS failed, trying plain FTP..."
+deploy_ftp false
+echo "Deployment complete via FTP."

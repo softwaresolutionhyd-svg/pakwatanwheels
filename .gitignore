@@ -1,0 +1,17 @@
+# Archives & temp
+*.zip
+*.rar
+*.7z
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.cursor/
+
+# Python (local scripts only, not needed on live site)
+__pycache__/
+*.pyc

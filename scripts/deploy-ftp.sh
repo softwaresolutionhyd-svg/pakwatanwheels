@@ -44,52 +44,82 @@ for file in "${files[@]}"; do
   fi
 done
 
-upload_file() {
-  local file="$1"
-  local remote_path="${SERVER_DIR}/${file}"
-  local attempt
-
-  for attempt in 1 2 3; do
-    if curl --ftp-create-dirs --fail --silent --show-error \
-      --connect-timeout 30 \
-      --max-time 180 \
-      --ftp-skip-pasv-ip \
-      --ssl-reqd \
-      -T "$file" \
-      --user "${FTP_USERNAME}:${FTP_PASSWORD}" \
-      "ftps://${FTP_SERVER}/${remote_path}"; then
-      echo "Uploaded: ${file}"
-      return 0
-    fi
-
-    echo "FTPS retry ${attempt}/3 for ${file}"
-    sleep 2
-  done
-
-  for attempt in 1 2 3; do
-    if curl --ftp-create-dirs --fail --silent --show-error \
-      --connect-timeout 30 \
-      --max-time 180 \
-      --ftp-skip-pasv-ip \
-      -T "$file" \
-      --user "${FTP_USERNAME}:${FTP_PASSWORD}" \
-      "ftp://${FTP_SERVER}/${remote_path}"; then
-      echo "Uploaded via FTP: ${file}"
-      return 0
-    fi
-
-    echo "FTP retry ${attempt}/3 for ${file}"
-    sleep 2
-  done
-
-  echo "Failed to upload: ${file}" >&2
-  return 1
+install_lftp() {
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq lftp
 }
 
-echo "Deploying ${#ordered_files[@]} files to ${SERVER_DIR}"
+build_put_commands() {
+  local file
+  for file in "${ordered_files[@]}"; do
+    printf 'put -O . "%s"\n' "$file"
+  done
+}
 
-for file in "${ordered_files[@]}"; do
-  upload_file "$file"
-done
+deploy_sftp() {
+  local put_commands
+  put_commands="$(build_put_commands)"
+  echo "Deploying ${#ordered_files[@]} files to ${SERVER_DIR} via SFTP..."
+  lftp -u "${FTP_USERNAME}","${FTP_PASSWORD}" "sftp://${FTP_SERVER}" <<EOF
+set cmd:fail-exit yes
+set sftp:auto-confirm yes
+set net:timeout 120
+set net:max-retries 5
+cd ${SERVER_DIR}
+lcd .
+${put_commands}
+bye
+EOF
+}
 
-echo "Deployment complete."
+deploy_ftps() {
+  local put_commands
+  put_commands="$(build_put_commands)"
+  echo "Deploying ${#ordered_files[@]} files to ${SERVER_DIR} via FTPS..."
+  lftp -u "${FTP_USERNAME}","${FTP_PASSWORD}" "${FTP_SERVER}" <<EOF
+set cmd:fail-exit yes
+set ssl:verify-certificate no
+set ftp:ssl-force true
+set ftp:ssl-protect-data true
+set ftp:passive-mode true
+set net:timeout 120
+set net:max-retries 5
+cd ${SERVER_DIR}
+lcd .
+${put_commands}
+bye
+EOF
+}
+
+deploy_ftp() {
+  local put_commands
+  put_commands="$(build_put_commands)"
+  echo "Deploying ${#ordered_files[@]} files to ${SERVER_DIR} via FTP..."
+  lftp -u "${FTP_USERNAME}","${FTP_PASSWORD}" "${FTP_SERVER}" <<EOF
+set cmd:fail-exit yes
+set ftp:passive-mode true
+set net:timeout 120
+set net:max-retries 5
+cd ${SERVER_DIR}
+lcd .
+${put_commands}
+bye
+EOF
+}
+
+install_lftp
+
+if deploy_sftp; then
+  echo "Deployment complete via SFTP."
+  exit 0
+fi
+
+echo "SFTP failed, trying FTPS..."
+if deploy_ftps; then
+  echo "Deployment complete via FTPS."
+  exit 0
+fi
+
+echo "FTPS failed, trying plain FTP..."
+deploy_ftp
+echo "Deployment complete via FTP."

@@ -32,9 +32,11 @@ build_put_commands() {
 
 deploy_ftps() {
   local put_commands
+  local attempt
   put_commands="$(build_put_commands)"
   echo "Uploading ${#DEPLOY_FILES[@]} files to ${SERVER_DIR} via FTPS..."
-  lftp -u "${FTP_USERNAME}","${FTP_PASSWORD}" "${FTP_SERVER}" <<EOF
+  for attempt in 1 2 3 4 5; do
+    if lftp -u "${FTP_USERNAME}","${FTP_PASSWORD}" "${FTP_SERVER}" <<EOF
 set cmd:fail-exit yes
 set ssl:verify-certificate no
 set ftp:ssl-force true
@@ -48,6 +50,13 @@ lcd .
 ${put_commands}
 bye
 EOF
+    then
+      return 0
+    fi
+    echo "FTPS attempt ${attempt}/5 failed; waiting before retry..."
+    sleep $((attempt * 20))
+  done
+  return 1
 }
 
 deploy_ftp() {

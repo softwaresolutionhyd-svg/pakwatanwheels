@@ -13,7 +13,6 @@ SERVER_DIR="${FTP_SERVER_DIR%/}"
 DEPLOY_FILES=(
   index.html
   css/style.css
-  images/cars-preview/05-toyota-revo-dala.jpg
 )
 
 install_lftp() {
@@ -35,7 +34,7 @@ deploy_ftps() {
   local attempt
   put_commands="$(build_put_commands)"
   echo "Uploading ${#DEPLOY_FILES[@]} files to ${SERVER_DIR} via FTPS..."
-  for attempt in 1 2 3 4 5; do
+  for attempt in 1 2 3; do
     if lftp -u "${FTP_USERNAME}","${FTP_PASSWORD}" "${FTP_SERVER}" <<EOF
 set cmd:fail-exit yes
 set ssl:verify-certificate no
@@ -53,8 +52,8 @@ EOF
     then
       return 0
     fi
-    echo "FTPS attempt ${attempt}/5 failed; waiting before retry..."
-    sleep $((attempt * 20))
+    echo "FTPS attempt ${attempt}/3 failed; waiting before retry..."
+    sleep $((attempt * 30))
   done
   return 1
 }
